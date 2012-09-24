@@ -11,42 +11,52 @@ import java.io.InputStream;
 import java.io.InputStreamReader;
 import java.io.PrintWriter;
 import java.net.Socket;
+import java.util.HashMap;
 import java.util.HashSet;
 import java.util.LinkedList;
 import java.util.List;
+import java.util.Map;
 import java.util.Set;
 import java.util.StringTokenizer;
 import java.util.regex.Pattern;
 
 public class TrackMe {
-	static final int MAX_LEVEL = 4;
+	static final int MAX_LEVEL = 4; // maximum depth for mirroring
 
-	static Url baseURL;
-	static Set<String> downloaded, savedFileList;
+	static Url baseURL; // The given starting url
+	static Map<String, String> downloaded, modifiedLink;
+	static Set<String> savedFileList;
 	static File homeDir, dbase;
 
 	public static void main(String[] args) throws IOException {
 		baseURL = new Url(args[0]);
-		downloaded = new HashSet<String>();
+		downloaded = new HashMap<String, String>();
+		modifiedLink = new HashMap<String, String>();
 		savedFileList = new HashSet<String>();
 
+		// Create or clear local home directory
 		homeDir = new File(baseURL.getHost());
 		if (homeDir.exists())
 			clearFolder(homeDir);
 		else
 			homeDir.mkdir();
 
+		// Create dbase.txt
 		dbase = new File(homeDir.getName() + "/dbase.txt");
 		dbase.createNewFile();
 
+		// Download pages up to depth MAX_LEVEL from level 0
 		mirrorPage(baseURL, 0);
-		// change file reference
+
+		// Change file references in local files
+
 	}
 
+	// mirror page at given url to local homeDir
 	private static void mirrorPage(Url url, int level) {
 		String pagePath = url.urlString.replaceFirst(url.getFile(), "");
 
-		if (!downloaded.contains(url.urlString)) {
+		if (!downloaded.containsKey(url.urlString)) {
 			HttpMessage inHttpMsg = retrieveFile(url);
 
 			if (inHttpMsg.code == 200) {
@@ -64,6 +74,8 @@ public class TrackMe {
 		}
 	}
 
+	// process page, download images and mirror pages obtained from the
+	// processing
 	private static void processPage(File currPage, String pagePath, int level) {
 		List<Url> pageList = new LinkedList<Url>();
 		List<Url> resourceList = new LinkedList<Url>();
@@ -77,36 +89,23 @@ public class TrackMe {
 		}
 	}
 
+	// finds the local file for an already downloaded url
 	private static File findLocalFile(Url url) {
-		String line, localFileName;
-		BufferedReader fin;
+		String localFileName = downloaded.get(url.urlString);
 
-		try {
-			fin = new BufferedReader(new FileReader(dbase));
-			while ((line = fin.readLine()) != null) {
-				if (line.contains(url.getPath())) {
-					StringTokenizer st = new StringTokenizer(line, ";");
-					st.nextToken();
-					st.nextToken();
-					localFileName = st.nextToken();
+		if (localFileName == null)
+			return null;
 
-					if (localFileName.equals("FILE DOES NOT EXIST"))
-						break;
+		File localFile = new File(homeDir.getName() + "/" + localFileName);
 
-					File localFile = new File(url.getHost() + "/"
-							+ localFileName);
-					fin.close();
-					return localFile;
-				}
-			}
-			fin.close();
-		} catch (IOException e) {
-			System.out.println("Error reading dbase");
-		}
-
-		return null;
+		if (localFile.exists())
+			return localFile;
+		else
+			return null;
 	}
 
+	// find all html links and img links in a html file
+	// saves them to pageList and resourcesList respectively
 	private static void parseHTML(File currPage, List<Url> pageList,
 			List<Url> resourceList, String pagePath) {
 		String line;
@@ -114,6 +113,7 @@ public class TrackMe {
 		try {
 			BufferedReader fin = new BufferedReader(new FileReader(currPage));
 
+			// search for links line by line
 			while ((line = fin.readLine()) != null) {
 				findHtmlLinks(line, pageList, pagePath);
 				findImageLinks(line, resourceList, pagePath);
@@ -128,13 +128,16 @@ public class TrackMe {
 		}
 	}
 
+	// Find all the html links in a line of html and save them to pageList
 	private static void findHtmlLinks(String line, List<Url> pageList,
 			String pagePath) {
 		int readIndex, linkIndex;
 		String currLink;
 
 		readIndex = 0;
+		// detect a <a> tag starting from readIndex at the current html line
 		while ((linkIndex = line.indexOf("<a href=", readIndex)) != -1) {
+			// extract link from the tag
 			currLink = "";
 			while (line.charAt(linkIndex + 9) != '\"') {
 				currLink += line.charAt(linkIndex + 9);
@@ -143,20 +146,25 @@ public class TrackMe {
 
 			Url u = makeAbsoluteURL(pagePath, currLink);
 
+			// add to pageList if it's from the same host
 			if (u.getHost().equals(baseURL.getHost()))
 				pageList.add(u);
 
+			// continue searching from after the current link
 			readIndex = linkIndex + 1;
 		}
 	}
-	
+
+	// Find all the image links in a line of html and save them to resourceList
 	private static void findImageLinks(String line, List<Url> resourceList,
 			String pagePath) {
 		int readIndex, linkIndex;
 		String currLink;
 
 		readIndex = 0;
+		// detect a <img> tag starting from readIndex at the current html line
 		while ((linkIndex = line.indexOf("<img src=", readIndex)) != -1) {
+			// extract link from the tag
 			currLink = "";
 			while (line.charAt(linkIndex + 10) != '\"') {
 				currLink += line.charAt(linkIndex + 10);
@@ -165,25 +173,34 @@ public class TrackMe {
 
 			Url u = makeAbsoluteURL(pagePath, currLink);
 
+			// add to resourceList if it comes from the same server
 			if (u.getHost().equals(baseURL.getHost()))
 				resourceList.add(u);
 
+			// continue searching after the current link
 			readIndex = linkIndex + 1;
 		}
 	}
 
-	private static Url makeAbsoluteURL(String pagePath, String currLink) {
-		if (!currLink.contains("http://") && currLink.charAt(0) != '/')
-			currLink = pagePath + currLink;
-		else if (!currLink.contains("http://") && currLink.charAt(0) == '/')
-			currLink = "http://" + baseURL.getHost() + currLink;
+	// Change a relative url to an absolute one
+	private static Url makeAbsoluteURL(String pagePath, String link) {
+		String originalLink = link;
+		
+		if (!link.contains("http://") && link.charAt(0) != '/')
+			link = pagePath + link;
+		else if (!link.contains("http://") && link.charAt(0) == '/')
+			link = "http://" + baseURL.getHost() + link;
 
-		return new Url(currLink);
+		modifiedLink.put(originalLink,link);
+		
+		return new Url(link);
 	}
 
+	// Download all image in a page
 	private static void downloadResources(List<Url> resourceList) {
 		for (Url url : resourceList) {
-			if (!downloaded.contains(url.urlString)) {
+			// Download if not already downloaded
+			if (!downloaded.containsKey(url.urlString)) {
 				HttpMessage inHttpMsg = retrieveFile(url);
 				if (inHttpMsg.code == 200)
 					saveFile(url, inHttpMsg);
@@ -193,8 +210,12 @@ public class TrackMe {
 		}
 	}
 
+	// Decides what to save the received file as in the local directory
 	private static File saveFile(Url url, HttpMessage inHttpMsg) {
 		String fileName = url.getFile();
+
+		// if file of the same name already exist in local directory
+		// append x to the file name
 		while (savedFileList.contains(fileName)) {
 			StringTokenizer st = new StringTokenizer(fileName, ".");
 			fileName = st.nextToken();
@@ -203,13 +224,16 @@ public class TrackMe {
 				fileName = fileName + "." + st.nextToken();
 		}
 
+		// write file to disk and record that the file has been
+		// downloaded and its local filename
 		File f = writeToFile(inHttpMsg, fileName);
-		downloaded.add(url.urlString);
+		downloaded.put(url.urlString, fileName);
 		savedFileList.add(fileName);
 
 		return f;
 	}
 
+	// writes HTTP response body in msg to file with the fileName given
 	private static File writeToFile(HttpMessage msg, String fileName) {
 		File f = new File((baseURL.getHost() + "/" + fileName));
 
@@ -237,6 +261,7 @@ public class TrackMe {
 		return f;
 	}
 
+	// indicate in dbase.txt that file does not exist in server
 	private static void write404ToDbase(HttpMessage inHttpMsg) {
 		try {
 			BufferedWriter fout = new BufferedWriter(
@@ -249,14 +274,17 @@ public class TrackMe {
 		}
 	}
 
+	// Sends a GET request for a specified url and returns the HTTP response
 	private static HttpMessage retrieveFile(Url url) {
 		HttpMessage outmsg = new HttpMessage(HttpMessage.OUTGOING, url);
 		HttpMessage inmsg = new HttpMessage(HttpMessage.INCOMING, url);
+
 		inmsg.receive(outmsg.send(), outmsg.fileType);
 
 		return inmsg;
 	}
 
+	// Clears all files in a folder
 	private static void clearFolder(File f) {
 		if (f.isDirectory())
 			for (File c : f.listFiles())
@@ -265,6 +293,7 @@ public class TrackMe {
 
 }
 
+// Class for sending and receiving HTTP messages
 class HttpMessage {
 	public static final int OUTGOING = 0;
 	public static final int INCOMING = 1;
@@ -288,12 +317,14 @@ class HttpMessage {
 		this.direction = dir;
 		this.url = url;
 
+		// Build GET message if direction is outgoing
 		if (direction == OUTGOING) {
 			version = "1.0";
 
 			header = ("GET " + url.getPath() + " HTTP/" + version + "\r\n");
 			header += ("Host: " + url.getHost() + "\r\n");
 
+			// Declare accept types in header depending on file type
 			if (Pattern.matches(HTML_PATTERN, url.getFile())) {
 				header += ("Accept: text/plain, text/html, text/*\r\n");
 				fileType = HTML;
@@ -305,6 +336,7 @@ class HttpMessage {
 		}
 	}
 
+	// Receives HTTP response from the given socket connection
 	public void receive(Socket socket, int fType) {
 		String line;
 		fileType = fType;
@@ -314,6 +346,7 @@ class HttpMessage {
 			BufferedReader sin = new BufferedReader(new InputStreamReader(
 					sinStream));
 
+			// Parse first line of header
 			header = sin.readLine();
 			StringTokenizer st = new StringTokenizer(header);
 			version = st.nextToken();
@@ -321,6 +354,7 @@ class HttpMessage {
 			code = Integer.parseInt(st.nextToken());
 			phrase = st.nextToken();
 
+			// Parse the rest of the header
 			while (!(line = sin.readLine()).equalsIgnoreCase("")) {
 				if (line.contains("Content-Length"))
 					contentLength = Integer.valueOf(line.substring(16));
@@ -329,20 +363,23 @@ class HttpMessage {
 				header += ("\r\n" + line);
 			}
 
+			// Download HTML files
 			if (fileType == HTML) {
 				htmlContent = "";
 				while ((line = sin.readLine()) != null) {
+					// Find the last modified date from meta tag
 					if (line.contains("http-equiv=\"last-modified\"")) {
 						int dateIndex = line
 								.indexOf("http-equiv=\"last-modified\"");
 						lastModified = line.substring(dateIndex + 36,
 								dateIndex + 65);
-						// System.out.println(lastModified);
 					}
 
 					htmlContent += ("\n" + line);
 				}
-			} else if (fileType == IMAGE) {
+			}
+			// Download image files
+			else if (fileType == IMAGE) {
 				int n = 0;
 				byte[] buffer = new byte[1024];
 				ByteArrayOutputStream imgBuilder = new ByteArrayOutputStream();
@@ -361,6 +398,7 @@ class HttpMessage {
 		}
 	}
 
+	// Send HTTP request and return the socket connection
 	public Socket send() {
 		try {
 			Socket socket = new Socket(url.getHost(), 80);
@@ -374,13 +412,14 @@ class HttpMessage {
 			return socket;
 		} catch (IOException e) {
 			System.out
-					.println("Failed to send GET request to " + url.urlString);
+					.println("Failed sending GET request to " + url.urlString);
 		}
 
 		return null;
 	}
 }
 
+// Url class for URL parsing. Only accept absolute urls
 class Url {
 	String urlString, host, path, file, protocol;
 
@@ -400,18 +439,22 @@ class Url {
 		}
 	}
 
+	// Returns the host name of the url
 	public String getHost() {
 		return host;
 	}
 
+	// Returns the path of the url
 	public String getPath() {
 		return path;
 	}
 
+	// Returns the file name contained in the url
 	public String getFile() {
 		return file;
 	}
 
+	// Return the protocol name used in the url
 	public String getProtocol() {
 		return protocol;
 	}

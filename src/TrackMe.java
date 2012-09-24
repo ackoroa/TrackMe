@@ -35,6 +35,8 @@ public class TrackMe {
 		savedFileList = new HashSet<String>();
 
 		// Create or clear local home directory
+		System.out.println("Creating local home directory: "
+				+ baseURL.getHost() + "/...");
 		homeDir = new File(baseURL.getHost());
 		if (homeDir.exists())
 			clearFolder(homeDir);
@@ -42,30 +44,95 @@ public class TrackMe {
 			homeDir.mkdir();
 
 		// Create dbase.txt
+		System.out.println("Creating dbase.txt...");
 		dbase = new File(homeDir.getName() + "/dbase.txt");
 		dbase.createNewFile();
 
 		// Download pages up to depth MAX_LEVEL from level 0
+		System.out.println("Mirroring website: " + baseURL.urlString + "...");
 		mirrorPage(baseURL, 0);
 
-		// Change file references in local files
+		// Change file references in local html files
+		System.out.println("Updating references...");
+		for (File f : homeDir.listFiles()) {
+			if (Pattern.matches(HttpMessage.HTML_PATTERN, f.getName()))
+				updateReferences(f);
+		}
 
+		System.out.println("Complete");
+	}
+
+	private static void updateReferences(File f) {
+		String fileBuffer, line;
+
+		try {
+			BufferedReader fin = new BufferedReader(new FileReader(f));
+
+			// read file line by line and update reference if found in line
+			fileBuffer = "";
+			while ((line = fin.readLine()) != null) {
+				// Check from the set of modified links if any exists in the
+				// line
+				for (String originalReference : modifiedLink.keySet()) {
+					// if found, replace with local reference
+					if (line.contains(originalReference)) {
+						// the local reference is the local file name of the
+						// absolute online path of the original (possibly
+						// relative) reference of the file
+						String localReference = downloaded.get(modifiedLink
+								.get(originalReference));
+
+						// remove references to files not downloaded
+						if (localReference == null)
+							localReference = "";
+
+						// update reference
+						line = line.replace(originalReference, localReference);
+					}
+				}
+				fileBuffer += (line + "\r\n");
+			}
+			fin.close();
+
+			// write updated file back to disk
+			BufferedWriter fout = new BufferedWriter(new FileWriter(f));
+			fout.write(fileBuffer);
+			fout.close();
+
+		} catch (FileNotFoundException e) {
+			System.out.println("Error updating " + f.getName()
+					+ " cannot find file");
+		} catch (IOException io) {
+			System.out.println("Error updating " + f.getName()
+					+ " error reading/writing");
+		}
 	}
 
 	// mirror page at given url to local homeDir
 	private static void mirrorPage(Url url, int level) {
 		String pagePath = url.urlString.replaceFirst(url.getFile(), "");
 
+		// if not yet downloaded, download and process
 		if (!downloaded.containsKey(url.urlString)) {
 			HttpMessage inHttpMsg = retrieveFile(url);
 
-			if (inHttpMsg.code == 200) {
+			// file found
+			if (inHttpMsg.httpResponseType() == HttpMessage.OK) {
 				File currPage = saveFile(url, inHttpMsg);
 				processPage(currPage, pagePath, level);
-			} else if (inHttpMsg.code == 404) {
+			} 
+			// file not found
+			else if (inHttpMsg.httpResponseType() == HttpMessage.NOTFOUND) {
 				write404ToDbase(inHttpMsg);
 			}
-		} else {
+			// redirection occurs
+			else if (inHttpMsg.httpResponseType() == HttpMessage.REDIRECT) {
+				Url u = new Url(inHttpMsg.redirectLocation);
+				mirrorPage(u,level);
+			}
+		}
+		// if already downloaded, process local file instead
+		else {
 			File currPage = findLocalFile(url);
 
 			if (currPage != null) {
@@ -185,14 +252,14 @@ public class TrackMe {
 	// Change a relative url to an absolute one
 	private static Url makeAbsoluteURL(String pagePath, String link) {
 		String originalLink = link;
-		
+
 		if (!link.contains("http://") && link.charAt(0) != '/')
 			link = pagePath + link;
 		else if (!link.contains("http://") && link.charAt(0) == '/')
 			link = "http://" + baseURL.getHost() + link;
 
-		modifiedLink.put(originalLink,link);
-		
+		modifiedLink.put(originalLink, link);
+
 		return new Url(link);
 	}
 
@@ -202,10 +269,12 @@ public class TrackMe {
 			// Download if not already downloaded
 			if (!downloaded.containsKey(url.urlString)) {
 				HttpMessage inHttpMsg = retrieveFile(url);
-				if (inHttpMsg.code == 200)
+				if (inHttpMsg.httpResponseType() == HttpMessage.OK)
 					saveFile(url, inHttpMsg);
-				else if (inHttpMsg.code == 404)
+				else if (inHttpMsg.httpResponseType() == HttpMessage.NOTFOUND)
 					write404ToDbase(inHttpMsg);
+				else if(inHttpMsg.httpResponseType() == HttpMessage.REDIRECT)
+					resourceList.add(new Url(inHttpMsg.redirectLocation));
 			}
 		}
 	}
@@ -299,19 +368,23 @@ class HttpMessage {
 	public static final int INCOMING = 1;
 	public static final int HTML = 0;
 	public static final int IMAGE = 1;
-	private static final String IMAGE_PATTERN = "([^\\s]+(\\.(?i)(jpeg|jpg|gif))$)";
-	private static final String HTML_PATTERN = "([^\\s]+(\\.(?i)(html))$)";
+	public static final String IMAGE_PATTERN = "([^\\s]+(\\.(?i)(jpeg|jpg|gif))$)";
+	public static final String HTML_PATTERN = "([^\\s]+(\\.(?i)(html))$)";
+	
+	public static final int OK = 200;
+	public static final int NOTFOUND = 404;
+	public static final int REDIRECT = 399;
 
 	int direction;
 	Url url;
 	String header, htmlContent, version;
 	byte imgContent[];
 
-	String lastModified;
-	int fileType, contentLength;
+	String lastModified, redirectLocation;
+	int fileType;
 
-	int code;
-	String phrase;
+	int statusCode;
+	String statusPhrase;
 
 	public HttpMessage(int dir, Url url) {
 		this.direction = dir;
@@ -351,13 +424,16 @@ class HttpMessage {
 			StringTokenizer st = new StringTokenizer(header);
 			version = st.nextToken();
 			version = version.substring(5);
-			code = Integer.parseInt(st.nextToken());
-			phrase = st.nextToken();
-
+			statusCode = Integer.parseInt(st.nextToken());
+			statusPhrase = "";
+			while(st.hasMoreTokens()){
+				statusPhrase += st.nextToken();
+			}
+			
 			// Parse the rest of the header
 			while (!(line = sin.readLine()).equalsIgnoreCase("")) {
-				if (line.contains("Content-Length"))
-					contentLength = Integer.valueOf(line.substring(16));
+				if (line.contains("Location") && !line.contains("Content-"))
+					redirectLocation = line.substring(10);
 				if (line.contains("Last-Modified"))
 					lastModified = line.substring(15);
 				header += ("\r\n" + line);
@@ -416,6 +492,25 @@ class HttpMessage {
 		}
 
 		return null;
+	}
+	
+	// returns the response type of the msg or -1 if not supported
+	public int httpResponseType(){
+		switch(statusCode){
+			case 200:
+				return OK;
+			case 404:
+				return NOTFOUND;
+			case 301:
+				return REDIRECT;
+			case 302:
+				return REDIRECT;
+			case 303:
+				return REDIRECT;
+			case 307:
+				return REDIRECT;
+		}
+		return -1;
 	}
 }
 

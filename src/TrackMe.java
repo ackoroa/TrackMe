@@ -1,3 +1,8 @@
+/* CS2105 P1
+ * Arnold Christopher Koroa
+ * A0092101Y
+ */
+
 import java.io.BufferedReader;
 import java.io.BufferedWriter;
 import java.io.ByteArrayOutputStream;
@@ -10,7 +15,9 @@ import java.io.IOException;
 import java.io.InputStream;
 import java.io.InputStreamReader;
 import java.io.PrintWriter;
+
 import java.net.Socket;
+
 import java.util.HashMap;
 import java.util.HashSet;
 import java.util.LinkedList;
@@ -35,8 +42,8 @@ public class TrackMe {
 		savedFileList = new HashSet<String>();
 
 		// Create or clear local home directory
-		System.out.println("Creating local home directory: "
-				+ baseURL.getHost() + "/...");
+		// System.out.println("Creating local home directory: "
+		// + baseURL.getHost() + "/...");
 		homeDir = new File(baseURL.getHost());
 		if (homeDir.exists())
 			clearFolder(homeDir);
@@ -44,22 +51,23 @@ public class TrackMe {
 			homeDir.mkdir();
 
 		// Create dbase.txt
-		System.out.println("Creating dbase.txt...");
+		// System.out.println("Creating dbase.txt...");
 		dbase = new File(homeDir.getName() + "/dbase.txt");
 		dbase.createNewFile();
 
 		// Download pages up to depth MAX_LEVEL from level 0
-		System.out.println("Mirroring website: " + baseURL.urlString + "...");
+		// System.out.println("Mirroring website: " + baseURL.urlString +
+		// "...");
 		mirrorPage(baseURL, 0);
 
 		// Change file references in local html files
-		System.out.println("Updating references...");
+		// System.out.println("Updating references...");
 		for (File f : homeDir.listFiles()) {
 			if (Pattern.matches(HttpMessage.HTML_PATTERN, f.getName()))
 				updateReferences(f);
 		}
 
-		System.out.println("Complete");
+		// System.out.println("Complete");
 	}
 
 	private static void updateReferences(File f) {
@@ -120,7 +128,7 @@ public class TrackMe {
 			if (inHttpMsg.httpResponseType() == HttpMessage.OK) {
 				File currPage = saveFile(url, inHttpMsg);
 				processPage(currPage, pagePath, level);
-			} 
+			}
 			// file not found
 			else if (inHttpMsg.httpResponseType() == HttpMessage.NOTFOUND) {
 				write404ToDbase(inHttpMsg);
@@ -128,7 +136,7 @@ public class TrackMe {
 			// redirection occurs
 			else if (inHttpMsg.httpResponseType() == HttpMessage.REDIRECT) {
 				Url u = new Url(inHttpMsg.redirectLocation);
-				mirrorPage(u,level);
+				mirrorPage(u, level);
 			}
 		}
 		// if already downloaded, process local file instead
@@ -271,9 +279,7 @@ public class TrackMe {
 				HttpMessage inHttpMsg = retrieveFile(url);
 				if (inHttpMsg.httpResponseType() == HttpMessage.OK)
 					saveFile(url, inHttpMsg);
-				else if (inHttpMsg.httpResponseType() == HttpMessage.NOTFOUND)
-					write404ToDbase(inHttpMsg);
-				else if(inHttpMsg.httpResponseType() == HttpMessage.REDIRECT)
+				else if (inHttpMsg.httpResponseType() == HttpMessage.REDIRECT)
 					resourceList.add(new Url(inHttpMsg.redirectLocation));
 			}
 		}
@@ -318,6 +324,7 @@ public class TrackMe {
 				fout.write(msg.url.getHost() + ";" + msg.url.getPath() + ";"
 						+ f.getName() + ";" + msg.lastModified + "\r\n");
 				fout.close();
+
 			} else if (msg.fileType == HttpMessage.IMAGE) {
 				FileOutputStream fout = new FileOutputStream(f);
 				fout.write(msg.imgContent);
@@ -370,7 +377,7 @@ class HttpMessage {
 	public static final int IMAGE = 1;
 	public static final String IMAGE_PATTERN = "([^\\s]+(\\.(?i)(jpeg|jpg|gif))$)";
 	public static final String HTML_PATTERN = "([^\\s]+(\\.(?i)(html))$)";
-	
+
 	public static final int OK = 200;
 	public static final int NOTFOUND = 404;
 	public static final int REDIRECT = 399;
@@ -426,10 +433,10 @@ class HttpMessage {
 			version = version.substring(5);
 			statusCode = Integer.parseInt(st.nextToken());
 			statusPhrase = "";
-			while(st.hasMoreTokens()){
+			while (st.hasMoreTokens()) {
 				statusPhrase += st.nextToken();
 			}
-			
+
 			// Parse the rest of the header
 			while (!(line = sin.readLine()).equalsIgnoreCase("")) {
 				if (line.contains("Location") && !line.contains("Content-"))
@@ -493,22 +500,22 @@ class HttpMessage {
 
 		return null;
 	}
-	
+
 	// returns the response type of the msg or -1 if not supported
-	public int httpResponseType(){
-		switch(statusCode){
-			case 200:
-				return OK;
-			case 404:
-				return NOTFOUND;
-			case 301:
-				return REDIRECT;
-			case 302:
-				return REDIRECT;
-			case 303:
-				return REDIRECT;
-			case 307:
-				return REDIRECT;
+	public int httpResponseType() {
+		switch (statusCode) {
+		case 200:
+			return OK;
+		case 404:
+			return NOTFOUND;
+		case 301:
+			return REDIRECT;
+		case 302:
+			return REDIRECT;
+		case 303:
+			return REDIRECT;
+		case 307:
+			return REDIRECT;
 		}
 		return -1;
 	}
